@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+jinja2
+soundfile
+numpy
+scipy
+requests
+openai
+python-multipart
+python-dotenv

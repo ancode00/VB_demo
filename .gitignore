@@ -1,0 +1,11 @@
+.env
+.env
+__pycache__/
+*.pyc
+app/static/user_input.*
+app/static/bot_reply.*
+*.log
+
+venv/
+venv/
+venv/

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Real-Time Voicebot v2 Demo</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #121212; color: #fff; }
+    #status { font-size: 1.2em; margin-top: 2em; }
+    #transcript, #botreply { margin: 1em 0; }
+    .bubble { border-radius: 1em; display: inline-block; padding: 1em 1.5em; margin: 1em; }
+    .user { background: #424242; }
+    .bot { background: #1976d2; }
+    #stopBtn {
+      margin-top: 2em; background: #d32f2f; color: #fff; border: none;
+      border-radius: 1em; padding: 0.75em 2em; font-size: 1.1em; cursor: pointer;
+    }
+    #stopBtn:disabled { background: #888; cursor: not-allowed; }
+    #analysis-card {
+      margin: 2em auto 1em auto;
+      max-width: 550px;
+      background: #232323;
+      border-radius: 1em;
+      padding: 2em 1em;
+      box-shadow: 0 0 18px #111;
+      text-align: left;
+      display: none;
+    }
+    #analysis-card h3 { color: #ffc107; margin-top: 0; }
+    #analysis-card ul { margin: 0 0 1em 1.2em; }
+    #analysis-card strong { color: #81d4fa; }
+    #resetBtn {
+      margin-top: 1.5em; background: #1976d2; color: #fff; border: none;
+      border-radius: 1em; padding: 0.5em 1.5em; font-size: 1em; cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>🗣️ Real-Time Voicebot Demo</h1>
+  <div id="status">Status: <b>Idle</b></div>
+  <div id="conversation"></div>
+  <audio id="player" controls style="display:none"></audio>
+  <button id="stopBtn">🛑 Stop Conversation</button>
+  <div id="analysis-card">
+    <h3>🧠 Conversation Analysis</h3>
+    <div id="analysis-content">Analyzing...</div>
+  </div>
+  <button id="resetBtn">🔄 New Conversation</button>
+
+  <script>
+    let audioChunks = [];
+    let mediaRecorder;
+    let audioContext, source, processor;
+    let silenceStart = null;
+    const SILENCE_DURATION = 3.0; // seconds
+    const SILENCE_THRESHOLD = 0.01;
+
+    const statusDiv = document.getElementById("status");
+    const convoDiv = document.getElementById("conversation");
+    const player = document.getElementById("player");
+    const stopBtn = document.getElementById("stopBtn");
+    const analysisCard = document.getElementById("analysis-card");
+    const analysisContent = document.getElementById("analysis-content");
+    const resetBtn = document.getElementById("resetBtn");
+
+    let conversation = [];
+    let stopped = false;
+
+    function setStatus(msg) {
+      statusDiv.innerHTML = "Status: <b>" + msg + "</b>";
+      console.log("[STATUS]", msg);
+    }
+
+    // NEW: Play intro audio from backend and display intro bubble
+    async function playIntroAndStartListening() {
+      setStatus("Playing intro...");
+      try {
+        const resp = await fetch("/tts_intro");
+        const data = await resp.json();
+        if (data.audio_url && data.intro_text) {
+          player.src = data.audio_url + "?v=" + Date.now();
+          player.style.display = "block";
+          // Show the intro in the convo as the first bot message
+          convoDiv.innerHTML = `<div class="bubble bot">${data.intro_text}</div><br>`;
+          conversation = []; // start fresh
+          conversation.push({ role: "assistant", content: data.intro_text });
+          player.onended = () => {
+            setStatus("Listening...");
+            startListening();
+          };
+          await player.play();
+        } else {
+          setStatus("Intro failed, listening...");
+          startListening();
+        }
+      } catch (e) {
+        setStatus("Intro failed, listening...");
+        startListening();
+      }
+    }
+
+    async function startListening() {
+      if (stopped) {
+        setStatus("Conversation stopped");
+        return;
+      }
+      setStatus("Listening...");
+      audioChunks = [];
+      console.log("[LOG] Requesting microphone...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioContext = new(window.AudioContext || window.webkitAudioContext)();
+      source = audioContext.createMediaStreamSource(stream);
+      processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+      processor.onaudioprocess = function(e) {
+        const input = e.inputBuffer.getChannelData(0);
+        const rms = Math.sqrt(input.reduce((acc, x) => acc + x * x, 0) / input.length);
+        // Detect silence
+        if (rms < SILENCE_THRESHOLD) {
+          if (!silenceStart) {
+            silenceStart = audioContext.currentTime;
+          }
+          if (audioContext.currentTime - silenceStart > SILENCE_DURATION) {
+            stopListening();
+          }
+        } else {
+          silenceStart = null;
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => {
+        audioChunks.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        source.disconnect();
+        processor.disconnect();
+        stream.getTracks().forEach(track => track.stop());
+        sendAudio();
+      };
+      mediaRecorder.start();
+    }
+
+    function stopListening() {
+      setStatus("Processing...");
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+      if (audioContext) {
+        audioContext.close();
+      }
+    }
+
+    async function sendAudio() {
+      setStatus("Transcribing...");
+      const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("audio", audioBlob);
+      formData.append("conversation", JSON.stringify(conversation));
+
+      try {
+        const resp = await fetch("/ask", { method: "POST", body: formData });
+        const data = await resp.json();
+
+        if (data.error) {
+          setStatus("Error: " + data.error);
+          console.error("[API ERROR]", data.error);
+          return;
+        }
+
+        // Show user bubble
+        if (data.transcript) {
+          conversation.push({ role: "user", content: data.transcript });
+          convoDiv.innerHTML += `<div class="bubble user">${data.transcript}</div><br>`;
+        }
+
+        // Show bot bubble
+        if (data.bot_reply) {
+          conversation.push({ role: "assistant", content: data.bot_reply });
+          convoDiv.innerHTML += `<div class="bubble bot">${data.bot_reply}</div><br>`;
+        }
+
+        setStatus("Bot is replying...");
+        player.src = data.audio_url + "?v=" + Date.now();
+        player.style.display = "block";
+        player.play();
+        player.onended = () => {
+          if (!stopped) {
+            setTimeout(() => {
+              setStatus("Listening...");
+              startListening();
+            }, 500);
+          } else {
+            setStatus("Conversation stopped");
+          }
+        };
+
+      } catch (err) {
+        setStatus("Network error");
+        console.error("[API ERROR]", err);
+      }
+    }
+
+    // Stop Conversation Button Logic (with AI Analysis trigger)
+    stopBtn.onclick = async function() {
+      stopped = true;
+      setStatus("Conversation stopped");
+      stopBtn.disabled = true;
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      if (audioContext) audioContext.close();
+      player.pause();
+      player.currentTime = 0;
+      showAnalysis();
+    };
+
+    // ---- AI ANALYSIS FEATURE ----
+    async function showAnalysis() {
+      analysisCard.style.display = "block";
+      analysisContent.innerHTML = "Analyzing conversation...";
+      if (!conversation || conversation.length === 0) {
+        analysisContent.innerHTML = "No conversation to analyze.";
+        console.warn("[ANALYSIS] No conversation data found!");
+        return;
+      }
+      console.log("[ANALYSIS] Sending payload:", JSON.stringify({ conversation: conversation }));
+
+      try {
+        const resp = await fetch("/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation: conversation })
+        });
+        const data = await resp.json();
+        console.log("[ANALYSIS] API response:", data);
+        if (data.status === "success" && data.analysis) {
+          let html = "";
+          if (data.analysis.summary) {
+            html += "<strong>Summary:</strong><ul>";
+            for (const point of data.analysis.summary) html += `<li>${point}</li>`;
+            html += "</ul>";
+          }
+          if (data.analysis.lead_interest) html += `<strong>Lead Interest:</strong> ${data.analysis.lead_interest}<br>`;
+          if (data.analysis.csat) html += `<strong>CSAT:</strong> ${data.analysis.csat}<br>`;
+          if (data.analysis.improvements) html += `<strong>Improvements:</strong> ${data.analysis.improvements}<br>`;
+          if (data.analysis.raw) html += `<pre>${data.analysis.raw}</pre>`;
+          analysisContent.innerHTML = html;
+        } else {
+          analysisContent.innerHTML = "Analysis failed: " + (data.message || "Unknown error");
+          console.error("[ANALYSIS] Failure:", data);
+        }
+        resetBtn.style.display = "inline-block";
+      } catch (e) {
+        analysisContent.innerHTML = "Error fetching analysis.";
+        console.error("[ANALYSIS] Fetch error:", e);
+      }
+    }
+
+    // New Conversation / Reset Handler: start with intro each time
+    resetBtn.onclick = function() {
+      convoDiv.innerHTML = '';
+      conversation = [];
+      stopped = false;
+      stopBtn.disabled = false;
+      player.pause();
+      player.currentTime = 0;
+      analysisCard.style.display = "none";
+      resetBtn.style.display = "none";
+      setStatus("Idle");
+      setTimeout(playIntroAndStartListening, 1000);
+    };
+
+    // ---- On load, play intro then start listening ----
+    window.onload = () => {
+      setTimeout(playIntroAndStartListening, 1000);
+    };
+  </script>
+</body>
+</html>
