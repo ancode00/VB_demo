@@ -14,3 +14,4 @@ python-dotenv==1.0.0
 
 # HuggingFace (for fallback sentiment analysis)
 transformers==4.38.1
+torch==2.2.2
