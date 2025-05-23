@@ -65,7 +65,7 @@ def gpt_azure_chat(prompt, kb, system_prompt, messages):
     data = {
         "messages": msgs,
         "temperature": 0.6,
-        "max_tokens": 100   # You can drop to 80 for even snappier replies
+        "max_tokens": 75
     }
     endpoint = get_env_var("AZURE_OPENAI_ENDPOINT")
     logging.info(f"Sending {len(msgs)} messages to Azure GPT (max_tokens={data['max_tokens']})")

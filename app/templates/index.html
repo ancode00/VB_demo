@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Real-Time Voicebot v2 Demo</title>
+  <title>BotWot Voicebot v2 Demo</title>
   <style>
     body { font-family: sans-serif; text-align: center; background: #121212; color: #fff; }
     #status { font-size: 1.2em; margin-top: 2em; }
@@ -36,7 +36,7 @@
   </style>
 </head>
 <body>
-  <h1>🗣️ Real-Time Voicebot Demo</h1>
+  <h1>🗣️ Voicebot V2</h1>
   <div id="status">Status: <b>Idle</b></div>
   <div id="conversation"></div>
   <audio id="player" controls style="display:none"></audio>
@@ -48,6 +48,9 @@
   <button id="resetBtn">🔄 New Conversation</button>
 
   <script>
+    // === SWITCH: Streaming TTS mode? ===
+    const USE_STREAMING_TTS = true; // set to false to go back to buffered mode
+
     let audioChunks = [];
     let mediaRecorder;
     let audioContext, source, processor;
@@ -69,6 +72,41 @@
     function setStatus(msg) {
       statusDiv.innerHTML = "Status: <b>" + msg + "</b>";
       console.log("[STATUS]", msg);
+    }
+
+    // NEW: Streaming audio playback
+    function playStreamedAudio(text, onend = null) {
+      setStatus("Bot is replying (streaming)...");
+      player.style.display = "block";
+      player.pause();
+      player.removeAttribute('src'); // Reset
+
+      const mediaSource = new MediaSource();
+      player.src = URL.createObjectURL(mediaSource);
+
+      mediaSource.addEventListener('sourceopen', () => {
+        const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+        fetch(`/stream_tts?text=${encodeURIComponent(text)}`)
+          .then(response => {
+            const reader = response.body.getReader();
+            function pump() {
+              return reader.read().then(({ done, value }) => {
+                if (done) {
+                  try { mediaSource.endOfStream(); } catch(e){}
+                  return;
+                }
+                sourceBuffer.appendBuffer(value);
+                return pump();
+              });
+            }
+            return pump();
+          });
+      });
+
+      player.onended = () => {
+        if (onend) onend();
+      };
+      player.play();
     }
 
     // NEW: Play intro audio from backend and display intro bubble
@@ -183,20 +221,35 @@
           convoDiv.innerHTML += `<div class="bubble bot">${data.bot_reply}</div><br>`;
         }
 
-        setStatus("Bot is replying...");
-        player.src = data.audio_url + "?v=" + Date.now();
-        player.style.display = "block";
-        player.play();
-        player.onended = () => {
-          if (!stopped) {
-            setTimeout(() => {
-              setStatus("Listening...");
-              startListening();
-            }, 500);
-          } else {
-            setStatus("Conversation stopped");
-          }
-        };
+        // === Streaming/Buffered Switch ===
+        if (USE_STREAMING_TTS && data.bot_reply) {
+          playStreamedAudio(data.bot_reply, () => {
+            if (!stopped) {
+              setTimeout(() => {
+                setStatus("Listening...");
+                startListening();
+              }, 500);
+            } else {
+              setStatus("Conversation stopped");
+            }
+          });
+        } else {
+          // Buffered (legacy) mode
+          setStatus("Bot is replying...");
+          player.src = data.audio_url + "?v=" + Date.now();
+          player.style.display = "block";
+          player.play();
+          player.onended = () => {
+            if (!stopped) {
+              setTimeout(() => {
+                setStatus("Listening...");
+                startListening();
+              }, 500);
+            } else {
+              setStatus("Conversation stopped");
+            }
+          };
+        }
 
       } catch (err) {
         setStatus("Network error");

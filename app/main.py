@@ -4,11 +4,11 @@ import json
 import traceback
 import logging
 from fastapi import FastAPI, Request, UploadFile, File, Form, Body
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional, Dict, Any
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,9 +17,11 @@ from bot_helpers import elevenlabs_stt, gpt_azure_chat, elevenlabs_tts
 from bot_config import KB_FILE, SYSTEM_PROMPT
 import ffmpeg
 
+import requests
 import openai
-from transformers import pipeline  # Hugging Face fallback
+from transformers import pipeline
 from datetime import datetime
+from statistics import mean
 
 # ─── Logging Setup ────────────────────────────────────────────────
 logging.basicConfig(
@@ -41,73 +43,140 @@ try:
     logger.info(f"Knowledge base loaded from {KB_FILE}")
 except Exception as e:
     logger.error(f"Failed to load KB from {KB_FILE}: {e}")
-    KB = ""
+    KB = "HPE ProLiant Servers\nCustomer Requests: ..."  # Fallback minimal KB
 
-# ─── Analysis AI/Fallback Setup ──────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ANALYSIS_PROMPT = """Analyze this conversation and provide:
+ANALYSIS_PROMPT = """Analyze this HPE ProLiant Servers sales conversation and provide:
 1. A 5-point bullet summary
-2. Lead interest level (High/Medium/Low) and reason
-3. CSAT prediction (Satisfied/Neutral/Dissatisfied) with confidence
+2. Lead interest level (Very High/High/Medium/Low/Very Low) and reason
+3. CSAT prediction (Very Satisfied/Satisfied/Neutral/Dissatisfied/Very Dissatisfied) with confidence
 4. Top improvement suggestion for the agent
+5. Engagement score (0-100) based on message length, frequency, and intent clarity
+6. Resolution status (Resolved/Unresolved/Escalated/Demo Scheduled) with explanation
+7. Suggested follow-up action
 
 Conversation:
 {conversation}"""
 
 sentiment_analyzer = pipeline("sentiment-analysis")
 
-def extract_main_topic(text):
-    topics = ['pricing', 'support', 'features', 'availability', 'demo']
-    return next((t for t in topics if t in text.lower()), 'general inquiry')
+def analyze_with_openai(conversation_text: str) -> Dict[str, Any]:
+    """Analyze conversation using OpenAI's API."""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": ANALYSIS_PROMPT},
+                {"role": "user", "content": conversation_text}
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"OpenAI analysis failed: {e}")
+        return analyze_with_fallback(conversation_text.split("\n"))
 
-def parse_ai_response(text):
-    return {"raw": text}
+def analyze_with_fallback(conversation: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Enhanced fallback analysis with detailed insights"""
+    try:
+        # Get last 3 user messages for context
+        recent_messages = [msg["content"] for msg in conversation[-3:] if isinstance(msg, dict) and msg.get("role") == "user"]
+        combined_text = " ".join(recent_messages).lower() if recent_messages else ""
+        
+        # Enhanced sentiment analysis
+        sentiment = {"label": "NEUTRAL", "score": 0.5}
+        if recent_messages:
+            try:
+                sentiment_result = sentiment_analyzer(recent_messages[-1])
+                sentiment = sentiment_result[0] if isinstance(sentiment_result, list) else sentiment_result
+            except Exception as e:
+                logger.warning(f"Sentiment analysis failed: {e}")
 
-def analyze_with_openai(conversation_text):
-    openai.api_key = OPENAI_API_KEY
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{
-            "role": "system",
-            "content": "You're an expert conversation analyst. Provide crisp, structured analysis."
-        }, {
-            "role": "user",
-            "content": ANALYSIS_PROMPT.format(conversation=conversation_text)
-        }],
-        temperature=0.3
-    )
-    return parse_ai_response(response.choices[0].message['content'])
+        # Enhanced topic detection
+        topics = set()
+        topic_keywords = {
+            "HPE ProLiant": ["proliant", "server"],
+            "Server Models": ["dl", "gen", "ml", "bl"],
+            "Pricing": ["price", "cost", "budget"],
+            "Configuration": ["config", "spec", "memory", "cpu", "storage"],
+            "Support": ["support", "warranty", "help"]
+        }
+        
+        for topic, keywords in topic_keywords.items():
+            if any(keyword in combined_text for keyword in keywords):
+                topics.add(topic)
+                
+        # Calculate interest score
+        interest_factors = {
+            "message_length": sum(len(msg) for msg in recent_messages),
+            "question_count": sum(1 for msg in recent_messages if "?" in msg),
+            "specific_terms": sum(1 for term in ["proliant", "dl", "gen", "spec"] if term in combined_text)
+        }
+        
+        interest_score = min(
+            (interest_factors["message_length"] / 100) + 
+            (interest_factors["question_count"] * 10) +
+            (interest_factors["specific_terms"] * 15), 
+            100
+        )
+        
+        interest_level = (
+            "Very High" if interest_score > 80 else
+            "High" if interest_score > 60 else
+            "Medium" if interest_score > 40 else
+            "Low"
+        )
+        
+        # Generate meaningful summary points
+        summary_points = [
+            f"Customer discussed {len(topics)} main topics" if topics else "General inquiry",
+            f"Conversation shows {interest_level.lower()} interest level",
+            f"Recent sentiment: {sentiment['label']} (confidence: {sentiment['score']:.0%})",
+            "Key topics: " + ", ".join(topics) if topics else "No specific topics identified",
+            f"{len(recent_messages)} user messages analyzed"
+        ]
+        
+        return {
+            "summary": summary_points,
+            "interest_level": interest_level,
+            "csat_prediction": (
+                "Very Satisfied" if sentiment["score"] > 0.9 else
+                "Satisfied" if sentiment["score"] > 0.7 else
+                "Neutral" if sentiment["score"] > 0.4 else
+                "Dissatisfied"
+            ),
+            "improvement_suggestion": (
+                "Ask about specific server needs" if "HPE ProLiant" in topics else
+                "Discuss pricing options" if "Pricing" in topics else
+                "Provide technical specifications" if "Configuration" in topics else
+                "General sales approach recommended"
+            ),
+            "engagement_score": int(interest_score),
+            "resolution_status": (
+                "Demo Scheduled" if any(x in combined_text for x in ["demo", "meeting"]) else
+                "Follow-up Needed" if interest_score > 50 else
+                "Unresolved"
+            ),
+            "follow_up_action": (
+                "Schedule technical demo" if interest_level in ["Very High", "High"] else
+                "Send product information" if interest_level == "Medium" else
+                "General follow-up email"
+            ),
+            "sentiment": sentiment["label"],
+            "confidence": float(sentiment["score"]),
+            "main_topics": list(topics) if topics else ["General Inquiry"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Enhanced fallback analysis failed: {traceback.format_exc()}")
+        return {
+            "error": str(e),
+            "summary": ["Analysis temporarily unavailable"],
+            "interest_level": "Unknown",
+            "csat_prediction": "Unknown"
+        }
 
-def analyze_with_fallback(conversation):
-    if not conversation or not isinstance(conversation, list):
-        logger.error("Fallback analysis received empty or invalid conversation.")
-        return {"error": "No valid conversation data received."}
-    last_user_msg = next((msg['content'] for msg in reversed(conversation) if msg.get('role') == 'user'), '')
-    if not last_user_msg:
-        logger.error("Fallback analysis: no user messages found.")
-        return {"error": "No user messages in conversation."}
-    sentiment = sentiment_analyzer(last_user_msg)[0]
-    csat = "Satisfied" if sentiment['label'] == 'POSITIVE' else "Neutral" if sentiment['score'] < 0.7 else "Dissatisfied"
-    interest_keywords = {
-        'price': 'High', 'cost': 'High', 'buy': 'High',
-        'info': 'Medium', 'detail': 'Medium', 'how': 'Medium',
-        'hello': 'Low', 'hi': 'Low', 'thanks': 'Low'
-    }
-    interest = next((v for k, v in interest_keywords.items() if k in last_user_msg.lower()), 'Low')
-    return {
-        "summary": [
-            "User initiated conversation",
-            f"Key topic: {extract_main_topic(last_user_msg)}",
-            f"Sentiment detected: {sentiment['label']} ({sentiment['score']:.0%})",
-            "Agent responded to query",
-            "Conversation concluded"
-        ],
-        "lead_interest": f"{interest} Intent (Keyword: {extract_main_topic(last_user_msg)})",
-        "csat": f"{csat} ({sentiment['score']:.0%} confidence)",
-        "improvements": "Agent could ask more qualifying questions" if interest == 'High' else "Agent could provide more detailed information"
-    }
-
-# Pydantic models for robust parsing & logging
 class Message(BaseModel):
     role: str
     content: str
@@ -117,7 +186,6 @@ class ConversationIn(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    logger.info("Rendering index.html for /")
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/ask")
@@ -129,17 +197,15 @@ async def ask(
     t0 = time.time()
     webm_path = "app/static/user_input.webm"
     wav_path = "app/static/user_input.wav"
-    bot_audio_path = "app/static/bot_reply.wav"
 
     try:
-        logger.info("Saving uploaded audio file...")
+        # Save uploaded audio
         with open(webm_path, "wb") as f:
             file_bytes = await audio.read()
             f.write(file_bytes)
         t1 = time.time()
-        logger.info(f"Audio saved as {webm_path} ({t1 - t0:.2f}s, {len(file_bytes)} bytes)")
 
-        logger.info("Converting to 16kHz, mono, PCM16 WAV via ffmpeg...")
+        # Convert to WAV format
         ffmpeg.input(webm_path).output(
             wav_path,
             format='wav',
@@ -148,117 +214,131 @@ async def ask(
             ar='16000'
         ).overwrite_output().run(quiet=True)
         t2 = time.time()
-        logger.info(f"ffmpeg conversion complete ({t2 - t1:.2f}s)")
 
-        os.system(f"file {wav_path}")
-
-        logger.info("Transcribing audio with ElevenLabs STT...")
+        # Speech-to-text
         stt_result_path = elevenlabs_stt(wav_path)
         with open(stt_result_path) as f:
             stt_json = json.load(f)
-        user_text = stt_json.get("text") or stt_json.get("transcript")
-        logger.info(f"User said: {user_text}")
+        user_text = stt_json.get("text") or stt_json.get("transcript", "")
         t3 = time.time()
-        logger.info(f"Transcription received: '{user_text}' ({t3 - t2:.2f}s)")
 
+        # Process conversation history
         history = []
         if conversation:
             try:
                 history = json.loads(conversation)
-                logger.info(f"Decoded conversation history (len={len(history)})")
-            except Exception as e:
-                logger.warning(f"Error decoding conversation history: {e} (raw={conversation[:200]})")
-        else:
-            logger.info("No conversation history provided.")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Error decoding conversation history: {e}")
 
-        logger.debug(f"Original conversation history: {history}")
-
-        if len(history) > 4:
-            logger.info(f"Trimming conversation history from {len(history)} to last 4 turns")
-            history = history[-4:]
-        logger.debug(f"Trimmed conversation history: {history}")
-
-        logger.info("Sending transcript to Azure GPT...")
+        # Get bot response
         bot_reply = gpt_azure_chat(user_text, KB, SYSTEM_PROMPT, history)
         t4 = time.time()
-        logger.info(f"Bot reply received: '{bot_reply}' ({t4 - t3:.2f}s)")
 
-        logger.info("Sending bot reply to ElevenLabs TTS...")
-        elevenlabs_tts(bot_reply, bot_audio_path)
-        t5 = time.time()
-        logger.info(f"TTS audio generated at {bot_audio_path} ({t5 - t4:.2f}s)")
-
-        history += [
+        # Update conversation history
+        updated_history = history + [
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": bot_reply}
         ]
-        logger.info(f"Updated conversation history: {len(history)} turns")
 
         logger.info(
-            "[TIMING] upload=%.2fs | convert=%.2fs | stt=%.2fs | gpt=%.2fs | tts=%.2fs | total=%.2fs",
-            t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t5-t0
+            f"Request processed in {t4-t0:.2f}s (audio: {t1-t0:.2f}s, "
+            f"convert: {t2-t1:.2f}s, stt: {t3-t2:.2f}s, gpt: {t4-t3:.2f}s)"
         )
 
         return JSONResponse({
             "transcript": user_text,
             "bot_reply": bot_reply,
-            "audio_url": "/static/bot_reply.wav",
-            "conversation": json.dumps(history)
+            "conversation": json.dumps(updated_history)
         })
 
     except Exception as e:
-        logger.error("----- Exception in /ask endpoint -----")
-        logger.error(traceback.format_exc())
-        logger.error("----- End Exception -----")
+        logger.error(f"Exception in /ask endpoint: {traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/analyze")
 async def analyze_conversation(payload: ConversationIn):
     try:
-        logger.info(f"Received /analyze request: {payload}")
         conversation = [msg.dict() for msg in payload.conversation]
         if not conversation:
-            logger.error("No conversation provided to /analyze.")
             return {"status": "error", "message": "No conversation data received."}
 
         conversation_text = "\n".join(
             f"{msg['role'].capitalize()}: {msg['content']}"
             for msg in conversation[-6:]
         )
-        logger.info(f"Analysis input text: {conversation_text}")
 
-        if OPENAI_API_KEY:
-            analysis = analyze_with_openai(conversation_text)
-        else:
-            analysis = analyze_with_fallback(conversation)
+        analysis_result = (
+            analyze_with_openai(conversation_text)
+            if OPENAI_API_KEY
+            else analyze_with_fallback(conversation)
+        )
 
-        logger.info(f"Analysis output: {analysis}")
         return {
             "status": "success",
-            "analysis": analysis,
-            "timestamp": datetime.now().isoformat()
+            "analysis": analysis_result,
+            "timestamp": datetime.now().isoformat(),
+            "conversation_length": len(conversation),
+            "main_topic": (
+                analysis_result.get("main_topics", ["General Inquiry"])[0]
+                if analysis_result.get("main_topics")
+                else "General Inquiry"
+            )
         }
     except Exception as e:
-        logger.error("Error during conversation analysis:")
-        logger.error(traceback.format_exc())
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        logger.error(f"Analysis error: {traceback.format_exc()}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/tts_intro")
 async def tts_intro():
-    """
-    Returns TTS audio_url and the intro text from env.
-    """
-    intro_text = os.getenv("BOT_INTRO_TEXT", "Hello! I am your assistant.")
+    intro_text = os.getenv("BOT_INTRO_TEXT", "Hello, I'm calling from HPE about your server needs. Do you have a moment to talk?")
     intro_audio_path = "app/static/intro.wav"
     try:
-        logger.info(f"Generating intro TTS: '{intro_text}'")
         elevenlabs_tts(intro_text, intro_audio_path)
-        logger.info(f"Intro TTS generated at {intro_audio_path}")
-        return JSONResponse({"audio_url": "/static/intro.wav", "intro_text": intro_text})
+        return JSONResponse({
+            "audio_url": "/static/intro.wav",
+            "intro_text": intro_text
+        })
     except Exception as e:
-        logger.error("Intro TTS generation failed:")
-        logger.error(traceback.format_exc())
+        logger.error(f"Intro TTS failed: {traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/stream_tts")
+async def stream_tts(text: str):
+    ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
+    ELEVEN_VOICE_ID = os.getenv("ELEVEN_VOICE_ID")
+    if not ELEVEN_API_KEY or not ELEVEN_VOICE_ID:
+        return JSONResponse(
+            {"error": "ElevenLabs configuration missing"},
+            status_code=500
+        )
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE_ID}/stream"
+    headers = {
+        "xi-api-key": ELEVEN_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.7,
+            "similarity_boost": 0.7
+        }
+    }
+
+    def generate_audio():
+        try:
+            with requests.post(url, headers=headers, json=payload, stream=True) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=4096):
+                    if chunk:
+                        yield chunk
+        except Exception as e:
+            logger.error(f"TTS streaming error: {traceback.format_exc()}")
+            raise
+
+    return StreamingResponse(
+        generate_audio(),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-cache"}
+    )
