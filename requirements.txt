@@ -1,10 +1,18 @@
-fastapi
-uvicorn
-jinja2
-soundfile
-numpy
-scipy
-requests
-openai
-python-multipart
-python-dotenv
+# Core Web
+fastapi==0.109.1
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# Audio Processing
+sounddevice==0.4.6
+numpy==1.26.3
+ffmpeg-python==0.2.0
+
+# APIs
+requests==2.31.0
+openai==1.12.0
+python-dotenv==1.0.0
+
+# NLP/Fallback AI
+transformers==4.38.2
+torch
