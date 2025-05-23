@@ -2,9 +2,6 @@ import os
 import time
 import requests
 import logging
-import sounddevice as sd
-import numpy as np
-import scipy.io.wavfile as wav
 import json
 
 from bot_config import *
@@ -27,37 +24,6 @@ def get_env_var(key, default=None):
     if value is None:
         logging.warning(f"Environment variable {key} is not set!")
     return value
-
-# ─── Record until Silence ──────────────────────────────────────────
-def record_until_silence():
-    logging.info(f"Recording... Speak (auto-stop after {SILENCE_DURATION:.1f}s silence)")
-    recording, silence_start = [], None
-    def callback(indata, frames, time_info, status):
-        nonlocal recording, silence_start
-        volume_norm = np.linalg.norm(indata)
-        recording.append(indata.copy())
-        if volume_norm < SILENCE_THRESHOLD:
-            if silence_start is None:
-                silence_start = time.time()
-            elif (time.time() - silence_start) > SILENCE_DURATION:
-                logging.info(f"Detected {SILENCE_DURATION:.1f}s silence, stopping recording.")
-                raise sd.CallbackStop()
-        else:
-            silence_start = None
-    try:
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=callback, blocksize=int(SAMPLE_RATE * 0.5)):
-            while True:
-                sd.sleep(500)
-    except sd.CallbackStop:
-        pass
-    except Exception as e:
-        logging.error(f"Error during recording: {e}")
-        return None
-    audio = np.concatenate(recording, axis=0)
-    filename = "user_input.wav"
-    wav.write(filename, SAMPLE_RATE, (audio * 32767).astype(np.int16))
-    logging.info(f"Saved user input to: {filename}")
-    return filename
 
 # ─── ElevenLabs Speech-to-Text ────────────────────────────────────
 def elevenlabs_stt(audio_path):
@@ -143,20 +109,6 @@ def elevenlabs_tts(text, out_path):
     with open(out_path, "wb") as f:
         f.write(r.content)
     return out_path
-
-# ─── Play Audio ──────────────────────────────────────────────────
-def play_audio(filepath):
-    import platform
-    logging.info(f"Playing audio: {filepath}")
-    try:
-        if platform.system() == "Darwin":
-            os.system(f"afplay {filepath}")
-        elif platform.system() == "Windows":
-            os.system(f"start {filepath}")
-        else:
-            os.system(f"aplay {filepath}")
-    except Exception as e:
-        logging.error(f"Error playing audio: {e}")
 
 # ─── Conversation End Detection ──────────────────────────────────
 def is_convo_end(user_text, bot_text):
