@@ -33,9 +33,142 @@
       border-radius: 1em; padding: 0.5em 1.5em; font-size: 1em; cursor: pointer;
       display: none;
     }
+    #admin-panel {
+      margin: 1.5em auto 2em auto;
+      max-width: 750px;
+      background: #191b24;
+      border-radius: 1.5em;
+      padding: 1.3em 1.3em 2.5em 1.3em;
+      box-shadow: 0 0 10px #161729;
+      text-align: left;
+    }
+    #admin-panel h2 {
+      margin-top: 0;
+      font-size: 1.5em;
+      color: #64b5f6;
+      letter-spacing: 1px;
+      text-align: center;
+    }
+    .admin-section {
+      margin-bottom: 2.2em;
+      border-bottom: 1px solid #333;
+      padding-bottom: 1em;
+    }
+    .admin-section:last-child { border-bottom: none; }
+    textarea {
+      width: 97%; min-height: 60px; font-size: 1em;
+      border-radius: 0.6em; border: 1px solid #424242; margin: 0.5em 0 1em 0;
+      padding: 0.7em; background: #222; color: #fff; resize: vertical;
+    }
+    .admin-btn {
+      margin-right: 1em; background: #1976d2; color: #fff; border: none;
+      border-radius: 0.7em; padding: 0.5em 1.4em; font-size: 1em; cursor: pointer;
+    }
+    .admin-btn:last-child { margin-right: 0; }
+    #kb-log-btn {
+      background: #232323; color: #bbb; border: 1px solid #444; margin-top: 0.5em;
+      font-size: 0.95em; border-radius: 0.5em;
+    }
+    #kb-log-viewer {
+      background: #181818; color: #fff; max-height: 230px; overflow-y: auto;
+      font-size: 0.98em; padding: 0.7em 1.1em; border-radius: 0.8em;
+      margin-top: 0.7em; border: 1px solid #2c2c2c; display: none;
+    }
+    .log-entry {
+      border-bottom: 1px solid #333; padding-bottom: 0.35em; margin-bottom: 0.35em;
+    }
+    .log-entry:last-child { border-bottom: none; }
+    .log-time { color: #ffb300; font-size: 0.95em; }
+    .log-target { color: #7e57c2; }
+    .log-action { color: #42a5f5; }
+    .log-old, .log-new { color: #ccc; font-size: 0.97em; }
+    #startBotBtn {
+      background:#2e7d32;
+      font-size:1.2em;
+      margin-bottom:1.5em;
+      border: none;
+      border-radius: 1em;
+      color: #fff;
+      padding: 0.8em 2em;
+      cursor: pointer;
+      display: inline-block;
+    }
+    #session-config {
+      margin-bottom: 1.2em;
+      padding: 1.1em 1.2em 1.2em 1.2em;
+      border-radius: 1em;
+      background: #212226;
+      color: #eee;
+      font-size: 1.1em;
+      box-shadow: 0 0 6px #141515;
+      max-width: 750px;
+      margin-left: auto;
+      margin-right: auto;
+      text-align: left;
+    }
+    #session-config label {
+      font-weight: bold;
+      display: inline-block;
+      margin-top: 0.6em;
+      margin-right: 0.8em;
+    }
+    #session-config input, #session-config select {
+      font-size: 1em;
+      padding: 0.3em 0.8em;
+      border-radius: 0.4em;
+      margin-right: 0.6em;
+      margin-bottom: 0.8em;
+      border: 1px solid #444;
+      background: #16191f;
+      color: #fff;
+    }
+    #kb-upload-label {
+      font-weight: bold;
+      margin-right: 1em;
+    }
   </style>
 </head>
 <body>
+  <div id="admin-panel">
+    <h2>🛠️ KB & System Prompt Management</h2>
+    <div id="session-config">
+      <label for="botType">Bot Type:</label>
+      <select id="botType">
+        <option value="incoming">Incoming</option>
+        <option value="outgoing">Outgoing</option>
+      </select>
+      <label for="voiceId">Voice ID:</label>
+      <input type="text" id="voiceId" placeholder="Enter Voice ID" />
+      <span id="kb-upload-label">Upload KB:</span>
+      <input type="file" id="kb-upload" accept=".pdf,.doc,.docx" />
+      <br>
+      <label for="introLine" id="introLabel" style="display:none;">Intro Line (Outgoing):</label>
+      <input type="text" id="introLine" style="display:none; width:55%;" placeholder="Enter outgoing call intro..." />
+      <label for="closingLine" id="closingLabel">Closing Line:</label>
+      <input type="text" id="closingLine" style="width:55%;" placeholder="Enter closing line..." />
+    </div>
+    <div class="admin-section">
+      <strong>Knowledge Base (KB):</strong>
+      <textarea id="kb-area" placeholder="Knowledge base loading..."></textarea>
+      <br>
+      <button class="admin-btn" onclick="updateKB()">Update</button>
+      <button class="admin-btn" onclick="appendKB()">Append</button>
+      <button class="admin-btn" onclick="resetKB()">Reset</button>
+    </div>
+    <div class="admin-section">
+      <strong>System Prompt:</strong>
+      <textarea id="prompt-area" placeholder="System prompt loading..."></textarea>
+      <br>
+      <button class="admin-btn" onclick="updatePrompt()">Update</button>
+      <button class="admin-btn" onclick="appendPrompt()">Append</button>
+      <button class="admin-btn" onclick="resetPrompt()">Reset</button>
+    </div>
+    <div>
+      <button id="kb-log-btn" onclick="toggleLog()">View Change Log</button>
+      <div id="kb-log-viewer"></div>
+    </div>
+  </div>
+  <button id="startBotBtn">✅ Confirm & Start Conversation</button>
   <h1>🗣️ Voicebot V2</h1>
   <div id="status">Status: <b>Idle</b></div>
   <div id="conversation"></div>
@@ -46,16 +179,252 @@
     <div id="analysis-content">Analyzing...</div>
   </div>
   <button id="resetBtn">🔄 New Conversation</button>
-
   <script>
-    // === SWITCH: Streaming TTS mode? ===
-    const USE_STREAMING_TTS = true; // set to false to go back to buffered mode
+    // ========== KB & PROMPT MANAGEMENT PANEL ==========
+    const kbArea = document.getElementById("kb-area");
+    const promptArea = document.getElementById("prompt-area");
+    const kbLogViewer = document.getElementById("kb-log-viewer");
+    let kbLogVisible = false;
 
+    async function loadKBPrompt() {
+      try {
+        const kbResp = await fetch("/get_kb");
+        const kbData = await kbResp.json();
+        kbArea.value = kbData.kb || "";
+      } catch {
+        kbArea.value = "";
+      }
+      try {
+        const promptResp = await fetch("/get_system_prompt");
+        const promptData = await promptResp.json();
+        promptArea.value = promptData.system_prompt || "";
+      } catch {
+        promptArea.value = "";
+      }
+    }
+
+    async function toggleLog() {
+      if (kbLogVisible) {
+        kbLogViewer.style.display = "none";
+        kbLogVisible = false;
+        return;
+      }
+      kbLogViewer.innerHTML = "Loading...";
+      kbLogViewer.style.display = "block";
+      kbLogVisible = true;
+      try {
+        const resp = await fetch("/kb_log");
+        const data = await resp.json();
+        let html = "";
+        if (!data.log || !data.log.length) html = "<i>No change log found.</i>";
+        else for (let i = data.log.length - 1; i >= 0; i--) {
+          const entry = data.log[i];
+          html += `
+            <div class="log-entry">
+              <span class="log-time">${new Date(entry.timestamp).toLocaleString()}</span>
+              <span class="log-action">[${entry.action}]</span>
+              <span class="log-target">${entry.target}</span><br>
+              <span class="log-old"><b>Old:</b> ${(entry.old_value || "").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span><br>
+              <span class="log-new"><b>New:</b> ${(entry.new_value || "").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
+            </div>`;
+        }
+        kbLogViewer.innerHTML = html;
+      } catch (e) {
+        kbLogViewer.innerHTML = "<b>Error loading log.</b>";
+      }
+    }
+
+    async function updateKB() {
+      const resp = await fetch("/update_kb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kb: kbArea.value })
+      });
+      alert("Knowledge Base updated!");
+      loadKBPrompt();
+    }
+    async function appendKB() {
+      const txt = prompt("Enter text to append to KB:");
+      if (!txt) return;
+      const resp = await fetch("/append_kb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kb: txt })
+      });
+      alert("Appended to Knowledge Base!");
+      loadKBPrompt();
+    }
+    async function resetKB() {
+      if (!confirm("This will replace the entire KB with the textarea value. Proceed?")) return;
+      const resp = await fetch("/reset_kb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kb: kbArea.value })
+      });
+      alert("Knowledge Base reset!");
+      loadKBPrompt();
+    }
+    async function updatePrompt() {
+      const resp = await fetch("/update_system_prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: promptArea.value })
+      });
+      alert("System Prompt updated!");
+      loadKBPrompt();
+    }
+    async function appendPrompt() {
+      const txt = prompt("Enter text to append to System Prompt:");
+      if (!txt) return;
+      const resp = await fetch("/append_system_prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: txt })
+      });
+      alert("Appended to System Prompt!");
+      loadKBPrompt();
+    }
+    async function resetPrompt() {
+      if (!confirm("This will replace the entire System Prompt with the textarea value. Proceed?")) return;
+      const resp = await fetch("/reset_system_prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: promptArea.value })
+      });
+      alert("System Prompt reset!");
+      loadKBPrompt();
+    }
+
+    // ======= SESSION CONFIG =======
+    const botType = document.getElementById("botType");
+    const voiceId = document.getElementById("voiceId");
+    const introLine = document.getElementById("introLine");
+    const closingLine = document.getElementById("closingLine");
+    const introLabel = document.getElementById("introLabel");
+    const closingLabel = document.getElementById("closingLabel");
+    const kbUpload = document.getElementById("kb-upload");
+
+    botType.onchange = function() {
+      if (botType.value === "outgoing") {
+        introLine.style.display = "inline-block";
+        introLabel.style.display = "inline-block";
+      } else {
+        introLine.style.display = "none";
+        introLabel.style.display = "none";
+        introLine.value = "";
+      }
+    };
+
+    // KB upload logic (PDF/DOC/DOCX -> append to textarea)
+    kbUpload.onchange = async function() {
+      if (!kbUpload.files.length) return;
+      const file = kbUpload.files[0];
+      const form = new FormData();
+      form.append("file", file);
+      setStatus("Parsing KB file...");
+      try {
+        const resp = await fetch("/parse_kb_file", { method: "POST", body: form });
+        const data = await resp.json();
+        if (data.error) {
+          alert("Parse error: " + data.error);
+          setStatus("KB file upload error");
+        } else {
+          kbArea.value = kbArea.value + "\n\n" + (data.text || "");
+          alert("Parsed KB file appended to textarea!");
+          setStatus("KB file parsed & appended.");
+        }
+      } catch (e) {
+        alert("Error uploading KB file.");
+        setStatus("KB file upload error");
+      }
+      kbUpload.value = "";
+    };
+
+    // Confirm & Start
+    const startBtn = document.getElementById("startBotBtn");
+    let botReady = false;
+    startBtn.onclick = async function() {
+      await fetch("/set_config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bot_type: botType.value,
+          voice_id: voiceId.value,
+          intro_line: introLine.value,
+          closing_line: closingLine.value
+        })
+      });
+      setStatus("Training bot on new KB and prompt...");
+      startBtn.disabled = true;
+      startBtn.innerText = "⏳ Training...";
+      await loadKBPrompt();
+      const resp = await fetch("/confirm_ready", { method: "POST" });
+      const data = await resp.json();
+      await new Promise(r => setTimeout(r, 600));
+      if (data.status === "ready") {
+        setStatus("Ready! Playing outgoing intro...");
+        startBtn.style.display = "none";
+        botReady = true;
+        await playIntroAndStartListening();
+      } else {
+        setStatus("Bot not ready, try again.");
+        startBtn.disabled = false;
+        startBtn.innerText = "✅ Confirm & Start Conversation";
+      }
+    };
+
+    // ========== INTERRUPTION LOGIC (Speech VAD) ==========
+    let vadStream = null, vadAudioContext = null, vadSource = null, vadProcessor = null, vadSpeechDetected = false, vadSpeechStart = null;
+
+    function startInterruptionVAD(onInterrupt) {
+      stopInterruptionVAD();
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        vadStream = stream;
+        vadAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        vadSource = vadAudioContext.createMediaStreamSource(stream);
+        vadProcessor = vadAudioContext.createScriptProcessor(2048, 1, 1);
+        vadSpeechDetected = false;
+        vadSpeechStart = null;
+
+        vadProcessor.onaudioprocess = function(e) {
+          const input = e.inputBuffer.getChannelData(0);
+          const rms = Math.sqrt(input.reduce((acc, x) => acc + x * x, 0) / input.length);
+          // Even higher threshold & longer sustain for background noise resistance:
+          const SPEECH_THRESHOLD = 0.05;
+          const SUSTAINED_TIME = 0.30;
+          if (rms > SPEECH_THRESHOLD) {
+            if (!vadSpeechDetected) {
+              vadSpeechStart = vadAudioContext.currentTime;
+              vadSpeechDetected = true;
+            } else if (vadAudioContext.currentTime - vadSpeechStart > SUSTAINED_TIME) {
+              stopInterruptionVAD();
+              if (onInterrupt) onInterrupt();
+            }
+          } else {
+            vadSpeechDetected = false;
+            vadSpeechStart = null;
+          }
+        };
+        vadSource.connect(vadProcessor);
+        vadProcessor.connect(vadAudioContext.destination);
+      });
+    }
+
+    function stopInterruptionVAD() {
+      if (vadProcessor) vadProcessor.disconnect();
+      if (vadSource) vadSource.disconnect();
+      if (vadAudioContext) vadAudioContext.close();
+      if (vadStream) vadStream.getTracks().forEach(t => t.stop());
+      vadProcessor = vadSource = vadAudioContext = vadStream = null;
+    }
+
+    // ========== VOICEBOT CORE (unchanged from your logic) ==========
+    const USE_STREAMING_TTS = true;
     let audioChunks = [];
     let mediaRecorder;
     let audioContext, source, processor;
     let silenceStart = null;
-    const SILENCE_DURATION = 3.0; // seconds
+    const SILENCE_DURATION = 3.0;
     const SILENCE_THRESHOLD = 0.01;
 
     const statusDiv = document.getElementById("status");
@@ -74,15 +443,16 @@
       console.log("[STATUS]", msg);
     }
 
-    // NEW: Streaming audio playback
     function playStreamedAudio(text, onend = null) {
       setStatus("Bot is replying (streaming)...");
       player.style.display = "block";
       player.pause();
-      player.removeAttribute('src'); // Reset
+      player.removeAttribute('src');
 
       const mediaSource = new MediaSource();
       player.src = URL.createObjectURL(mediaSource);
+
+      let interrupted = false;
 
       mediaSource.addEventListener('sourceopen', () => {
         const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
@@ -91,6 +461,7 @@
             const reader = response.body.getReader();
             function pump() {
               return reader.read().then(({ done, value }) => {
+                if (interrupted) return;
                 if (done) {
                   try { mediaSource.endOfStream(); } catch(e){}
                   return;
@@ -103,13 +474,22 @@
           });
       });
 
+      // Start VAD to detect interruption
+      startInterruptionVAD(() => {
+        interrupted = true;
+        player.pause();
+        player.currentTime = 0;
+        setStatus("User interrupted. Listening...");
+        setTimeout(startListening, 400);
+      });
+
       player.onended = () => {
-        if (onend) onend();
+        stopInterruptionVAD();
+        if (onend && !interrupted) onend();
       };
       player.play();
     }
 
-    // NEW: Play intro audio from backend and display intro bubble
     async function playIntroAndStartListening() {
       setStatus("Playing intro...");
       try {
@@ -118,9 +498,8 @@
         if (data.audio_url && data.intro_text) {
           player.src = data.audio_url + "?v=" + Date.now();
           player.style.display = "block";
-          // Show the intro in the convo as the first bot message
           convoDiv.innerHTML = `<div class="bubble bot">${data.intro_text}</div><br>`;
-          conversation = []; // start fresh
+          conversation = [];
           conversation.push({ role: "assistant", content: data.intro_text });
           player.onended = () => {
             setStatus("Listening...");
@@ -144,7 +523,6 @@
       }
       setStatus("Listening...");
       audioChunks = [];
-      console.log("[LOG] Requesting microphone...");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioContext = new(window.AudioContext || window.webkitAudioContext)();
       source = audioContext.createMediaStreamSource(stream);
@@ -153,7 +531,6 @@
       processor.onaudioprocess = function(e) {
         const input = e.inputBuffer.getChannelData(0);
         const rms = Math.sqrt(input.reduce((acc, x) => acc + x * x, 0) / input.length);
-        // Detect silence
         if (rms < SILENCE_THRESHOLD) {
           if (!silenceStart) {
             silenceStart = audioContext.currentTime;
@@ -209,19 +586,16 @@
           return;
         }
 
-        // Show user bubble
         if (data.transcript) {
           conversation.push({ role: "user", content: data.transcript });
           convoDiv.innerHTML += `<div class="bubble user">${data.transcript}</div><br>`;
         }
 
-        // Show bot bubble
         if (data.bot_reply) {
           conversation.push({ role: "assistant", content: data.bot_reply });
           convoDiv.innerHTML += `<div class="bubble bot">${data.bot_reply}</div><br>`;
         }
 
-        // === Streaming/Buffered Switch ===
         if (USE_STREAMING_TTS && data.bot_reply) {
           playStreamedAudio(data.bot_reply, () => {
             if (!stopped) {
@@ -234,7 +608,6 @@
             }
           });
         } else {
-          // Buffered (legacy) mode
           setStatus("Bot is replying...");
           player.src = data.audio_url + "?v=" + Date.now();
           player.style.display = "block";
@@ -257,7 +630,6 @@
       }
     }
 
-    // Stop Conversation Button Logic (with AI Analysis trigger)
     stopBtn.onclick = async function() {
       stopped = true;
       setStatus("Conversation stopped");
@@ -269,17 +641,13 @@
       showAnalysis();
     };
 
-    // ---- AI ANALYSIS FEATURE ----
     async function showAnalysis() {
       analysisCard.style.display = "block";
       analysisContent.innerHTML = "Analyzing conversation...";
       if (!conversation || conversation.length === 0) {
         analysisContent.innerHTML = "No conversation to analyze.";
-        console.warn("[ANALYSIS] No conversation data found!");
         return;
       }
-      console.log("[ANALYSIS] Sending payload:", JSON.stringify({ conversation: conversation }));
-
       try {
         const resp = await fetch("/analyze", {
           method: "POST",
@@ -287,7 +655,6 @@
           body: JSON.stringify({ conversation: conversation })
         });
         const data = await resp.json();
-        console.log("[ANALYSIS] API response:", data);
         if (data.status === "success" && data.analysis) {
           let html = "";
           if (data.analysis.summary) {
@@ -302,16 +669,13 @@
           analysisContent.innerHTML = html;
         } else {
           analysisContent.innerHTML = "Analysis failed: " + (data.message || "Unknown error");
-          console.error("[ANALYSIS] Failure:", data);
         }
         resetBtn.style.display = "inline-block";
       } catch (e) {
         analysisContent.innerHTML = "Error fetching analysis.";
-        console.error("[ANALYSIS] Fetch error:", e);
       }
     }
 
-    // New Conversation / Reset Handler: start with intro each time
     resetBtn.onclick = function() {
       convoDiv.innerHTML = '';
       conversation = [];
@@ -321,13 +685,16 @@
       player.currentTime = 0;
       analysisCard.style.display = "none";
       resetBtn.style.display = "none";
-      setStatus("Idle");
-      setTimeout(playIntroAndStartListening, 1000);
+      startBtn.style.display = "inline-block";
+      startBtn.disabled = false;
+      startBtn.innerText = "✅ Confirm & Start Conversation";
+      setStatus("Review KB and prompt, then press 'Confirm & Start Conversation'.");
+      stopInterruptionVAD();
     };
 
-    // ---- On load, play intro then start listening ----
     window.onload = () => {
-      setTimeout(playIntroAndStartListening, 1000);
+      loadKBPrompt();
+      setStatus("Review KB and prompt, then press 'Confirm & Start Conversation'.");
     };
   </script>
 </body>

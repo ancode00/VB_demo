@@ -1,23 +1,81 @@
-HPE ProLiant Servers
-Customer Requests:
+Botwot Virtual Assistant - Knowledge Base
+ 1.⁠ ⁠What is Botwot?
+Botwot is an AI-powered virtual assistant platform that helps businesses automate customer support, lead qualification, and task management using conversational AI.
 
-Qualification:
-Confirm Need - AI/security servers.
-Verify Decision-maker role.
-Check Budget - min. $X.
-Validate Timeline - <12mo.
+ 2.⁠ ⁠What are the key features of Botwot?
 
-Follow-up:
-Collect email → Send specs + demo invite.
+Natural language understanding and generation
 
-Operational:
-Escalate if prospect requests "HPE engineer".
+Omnichannel support (Web, WhatsApp, Telephony, etc.)
 
-Disqualify triggers:
-"Thank you! Reach out if needs change. Goodbye!"
+Integration with CRM and other business tools
 
-Fallback:
-"Let me transfer you to an HPE expert. Hold please!"
+Automated appointment scheduling
 
+Lead capture and qualification
 
+24/7 support capability
 
+Customizable conversation flows
+
+Analytics dashboard for monitoring performance
+
+ 3.⁠ ⁠How does Botwot integrate with other tools?
+Botwot can be integrated with popular CRMs (like Salesforce, HubSpot, Zoho), ticketing systems, and calendar tools (Google Calendar, Outlook). Integration is done via APIs and no-code connectors.
+
+ 4.⁠ ⁠How can I get started with Botwot?
+
+Sign up on the Botwot platform
+
+Follow the onboarding wizard to connect your channels and CRM
+
+Customize your assistant’s conversation flows using the visual editor
+
+Launch and monitor conversations from the dashboard
+
+ 5.⁠ ⁠What channels does Botwot support?
+Botwot supports:
+
+Website chat widgets
+
+WhatsApp and SMS
+
+Facebook Messenger
+
+Telephony (outgoing/incoming calls)
+
+Custom integrations via API
+
+ 6.⁠ ⁠How does Botwot help qualify leads?
+Botwot asks qualifying questions, captures lead information, and syncs it directly to your CRM. The bot can assign lead scores and notify your team in real time.
+
+ 7.⁠ ⁠Is Botwot secure and compliant?
+Yes, Botwot uses industry-standard encryption for data in transit and at rest. It supports GDPR compliance and role-based access control for enterprise customers.
+
+ 8.⁠ ⁠How can I customize my Botwot assistant’s responses?
+You can use the Botwot dashboard’s flow builder to edit messages, set rules, and add FAQs. The platform also supports dynamic variables to personalize replies.
+
+ 9.⁠ ⁠How does Botwot handle escalations to humans?
+If a customer query is too complex, Botwot can transfer the conversation to a human agent via live chat or email. The handover is seamless and preserves chat context.
+
+10.⁠ ⁠Who can I contact for Botwot support?
+You can email support@botwot.com or use the in-app help chat for immediate assistance.
+
+11.⁠ ⁠What’s the pricing model for Botwot?
+Botwot offers monthly and annual subscription plans based on number of users, channels, and volume of conversations. For detailed pricing, visit www.botwot.com/pricing or contact sales.
+
+12.⁠ ⁠Can Botwot be trained for specific industries?
+Yes, Botwot supports industry-specific templates (e.g., healthcare, real estate, e-commerce) to accelerate setup and provide relevant automation out of the box.
+
+Example Usage Instructions for the Bot
+If the user asks about product capabilities, list out the key features.
+
+For questions on integrations, explain the integration steps.
+
+If asked about security or compliance, mention data protection measures and GDPR.
+
+If the user needs onboarding help, guide them through signup and setup.
+
+For pricing queries, share the pricing URL or offer to connect with sales.
+
+Always offer to connect the user to a human if their query is not resolved.

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from bot_helpers import elevenlabs_stt, gpt_azure_chat, elevenlabs_tts
-from bot_config import KB_FILE, SYSTEM_PROMPT
+from bot_config import KB_FILE
 import ffmpeg
 
 import requests
@@ -23,7 +23,36 @@ from transformers import pipeline
 from datetime import datetime
 from statistics import mean
 
-# ─── Logging Setup ────────────────────────────────────────────────
+# For file parsing:
+import io
+import tempfile
+from fastapi.middleware.cors import CORSMiddleware
+
+# === Bot Readiness State and Config ===
+app = FastAPI()
+app.state.ready = False  # Bot is not ready until user confirms
+app.state.session_config = {
+    "bot_type": "incoming",   # incoming/outgoing
+    "voice_id": "",
+    "intro_line": "",
+    "closing_line": ""
+}
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
+
+# === KB/Prompt Management Start ===
+SYSTEM_PROMPT_FILE = "system_prompt.txt"
+KB_LOG_FILE = "kb_log.json"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -31,168 +60,199 @@ logging.basicConfig(
 )
 logger = logging.getLogger("voicebot_api")
 
-# ─── FastAPI Setup ────────────────────────────────────────────────
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
-
-# ─── Load Knowledge Base ──────────────────────────────────────────
-try:
-    with open(KB_FILE) as f:
-        KB = f.read()
-    logger.info(f"Knowledge base loaded from {KB_FILE}")
-except Exception as e:
-    logger.error(f"Failed to load KB from {KB_FILE}: {e}")
-    KB = "HPE ProLiant Servers\nCustomer Requests: ..."  # Fallback minimal KB
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ANALYSIS_PROMPT = """Analyze this HPE ProLiant Servers sales conversation and provide:
-1. A 5-point bullet summary
-2. Lead interest level (Very High/High/Medium/Low/Very Low) and reason
-3. CSAT prediction (Very Satisfied/Satisfied/Neutral/Dissatisfied/Very Dissatisfied) with confidence
-4. Top improvement suggestion for the agent
-5. Engagement score (0-100) based on message length, frequency, and intent clarity
-6. Resolution status (Resolved/Unresolved/Escalated/Demo Scheduled) with explanation
-7. Suggested follow-up action
-
-Conversation:
-{conversation}"""
-
-sentiment_analyzer = pipeline("sentiment-analysis")
-
-def analyze_with_openai(conversation_text: str) -> Dict[str, Any]:
-    """Analyze conversation using OpenAI's API."""
+def log_kb_action(action, target, old_value, new_value):
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "action": action,
+        "target": target,
+        "old_value": old_value,
+        "new_value": new_value
+    }
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": ANALYSIS_PROMPT},
-                {"role": "user", "content": conversation_text}
-            ],
-            temperature=0.3,
-            max_tokens=500
-        )
-        return json.loads(response.choices[0].message.content)
+        logs = []
+        if os.path.exists(KB_LOG_FILE):
+            with open(KB_LOG_FILE, "r") as f:
+                logs = json.load(f)
+        logs.append(entry)
+        with open(KB_LOG_FILE, "w") as f:
+            json.dump(logs, f, indent=2)
     except Exception as e:
-        logger.error(f"OpenAI analysis failed: {e}")
-        return analyze_with_fallback(conversation_text.split("\n"))
+        logger.error(f"Failed to write KB log: {e}")
 
-def analyze_with_fallback(conversation: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Enhanced fallback analysis with detailed insights"""
+def load_kb():
     try:
-        # Get last 3 user messages for context
-        recent_messages = [msg["content"] for msg in conversation[-3:] if isinstance(msg, dict) and msg.get("role") == "user"]
-        combined_text = " ".join(recent_messages).lower() if recent_messages else ""
-        
-        # Enhanced sentiment analysis
-        sentiment = {"label": "NEUTRAL", "score": 0.5}
-        if recent_messages:
+        with open(KB_FILE) as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Could not load KB: {e}")
+        return ""
+
+def load_system_prompt():
+    try:
+        with open(SYSTEM_PROMPT_FILE) as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Could not load system prompt: {e}")
+        return ""
+
+def save_kb(text):
+    old = load_kb()
+    with open(KB_FILE, "w") as f:
+        f.write(text)
+    log_kb_action("update", "kb", old, text)
+    app.state.ready = False
+
+def append_kb(text):
+    old = load_kb()
+    new = old + "\n" + text
+    with open(KB_FILE, "w") as f:
+        f.write(new)
+    log_kb_action("append", "kb", old, new)
+    app.state.ready = False
+
+def reset_kb(text):
+    old = load_kb()
+    with open(KB_FILE, "w") as f:
+        f.write(text)
+    log_kb_action("reset", "kb", old, text)
+    app.state.ready = False
+
+def save_system_prompt(text):
+    old = load_system_prompt()
+    with open(SYSTEM_PROMPT_FILE, "w") as f:
+        f.write(text)
+    log_kb_action("update", "system.prompt", old, text)
+    app.state.ready = False
+
+def append_system_prompt(text):
+    old = load_system_prompt()
+    new = old + "\n" + text
+    with open(SYSTEM_PROMPT_FILE, "w") as f:
+        f.write(new)
+    log_kb_action("append", "system.prompt", old, new)
+    app.state.ready = False
+
+def reset_system_prompt(text):
+    old = load_system_prompt()
+    with open(SYSTEM_PROMPT_FILE, "w") as f:
+        f.write(text)
+    log_kb_action("reset", "system.prompt", old, text)
+    app.state.ready = False
+
+@app.get("/get_kb")
+def get_kb():
+    return {"kb": load_kb()}
+
+@app.get("/get_system_prompt")
+def get_system_prompt():
+    return {"system_prompt": load_system_prompt()}
+
+@app.post("/update_kb")
+async def update_kb(body: dict = Body(...)):
+    save_kb(body.get("kb", ""))
+    return {"status": "ok"}
+
+@app.post("/append_kb")
+async def append_kb_ep(body: dict = Body(...)):
+    append_kb(body.get("kb", ""))
+    return {"status": "ok"}
+
+@app.post("/reset_kb")
+async def reset_kb_ep(body: dict = Body(...)):
+    reset_kb(body.get("kb", ""))
+    return {"status": "ok"}
+
+@app.post("/update_system_prompt")
+async def update_system_prompt(body: dict = Body(...)):
+    save_system_prompt(body.get("system_prompt", ""))
+    return {"status": "ok"}
+
+@app.post("/append_system_prompt")
+async def append_system_prompt_ep(body: dict = Body(...)):
+    append_system_prompt(body.get("system_prompt", ""))
+    return {"status": "ok"}
+
+@app.post("/reset_system_prompt")
+async def reset_system_prompt_ep(body: dict = Body(...)):
+    reset_system_prompt(body.get("system_prompt", ""))
+    return {"status": "ok"}
+
+@app.get("/kb_log")
+def get_kb_log():
+    try:
+        with open(KB_LOG_FILE) as f:
+            return {"log": json.load(f)}
+    except:
+        return {"log": []}
+
+# ========== BOT SESSION CONFIGURATION ==========
+@app.post("/set_config")
+async def set_config(body: dict = Body(...)):
+    """
+    Set bot type, voice ID, intro line, and closing line for the session.
+    """
+    for key in ["bot_type", "voice_id", "intro_line", "closing_line"]:
+        if key in body:
+            app.state.session_config[key] = body[key]
+    logger.info(f"Session config updated: {app.state.session_config}")
+    return {"status": "ok", "session_config": app.state.session_config}
+
+@app.post("/confirm_ready")
+async def confirm_ready():
+    app.state.ready = True
+    logger.info("Bot readiness confirmed by user.")
+    return {"status": "ready"}
+
+# ========== KB FILE UPLOAD AND PARSE ENDPOINT ==========
+from fastapi import File, UploadFile
+import mimetypes
+
+@app.post("/parse_kb_file")
+async def parse_kb_file(file: UploadFile = File(...)):
+    """
+    Accepts a PDF, DOC, or DOCX file, parses text, and returns the text.
+    """
+    filename = file.filename
+    content = await file.read()
+
+    filetype = mimetypes.guess_type(filename)[0]
+    text = ""
+
+    try:
+        if filename.lower().endswith(".pdf"):
             try:
-                sentiment_result = sentiment_analyzer(recent_messages[-1])
-                sentiment = sentiment_result[0] if isinstance(sentiment_result, list) else sentiment_result
-            except Exception as e:
-                logger.warning(f"Sentiment analysis failed: {e}")
-
-        # Enhanced topic detection
-        topics = set()
-        topic_keywords = {
-            "HPE ProLiant": ["proliant", "server"],
-            "Server Models": ["dl", "gen", "ml", "bl"],
-            "Pricing": ["price", "cost", "budget"],
-            "Configuration": ["config", "spec", "memory", "cpu", "storage"],
-            "Support": ["support", "warranty", "help"]
-        }
-        
-        for topic, keywords in topic_keywords.items():
-            if any(keyword in combined_text for keyword in keywords):
-                topics.add(topic)
-                
-        # Calculate interest score
-        interest_factors = {
-            "message_length": sum(len(msg) for msg in recent_messages),
-            "question_count": sum(1 for msg in recent_messages if "?" in msg),
-            "specific_terms": sum(1 for term in ["proliant", "dl", "gen", "spec"] if term in combined_text)
-        }
-        
-        interest_score = min(
-            (interest_factors["message_length"] / 100) + 
-            (interest_factors["question_count"] * 10) +
-            (interest_factors["specific_terms"] * 15), 
-            100
-        )
-        
-        interest_level = (
-            "Very High" if interest_score > 80 else
-            "High" if interest_score > 60 else
-            "Medium" if interest_score > 40 else
-            "Low"
-        )
-        
-        # Generate meaningful summary points
-        summary_points = [
-            f"Customer discussed {len(topics)} main topics" if topics else "General inquiry",
-            f"Conversation shows {interest_level.lower()} interest level",
-            f"Recent sentiment: {sentiment['label']} (confidence: {sentiment['score']:.0%})",
-            "Key topics: " + ", ".join(topics) if topics else "No specific topics identified",
-            f"{len(recent_messages)} user messages analyzed"
-        ]
-        
-        return {
-            "summary": summary_points,
-            "interest_level": interest_level,
-            "csat_prediction": (
-                "Very Satisfied" if sentiment["score"] > 0.9 else
-                "Satisfied" if sentiment["score"] > 0.7 else
-                "Neutral" if sentiment["score"] > 0.4 else
-                "Dissatisfied"
-            ),
-            "improvement_suggestion": (
-                "Ask about specific server needs" if "HPE ProLiant" in topics else
-                "Discuss pricing options" if "Pricing" in topics else
-                "Provide technical specifications" if "Configuration" in topics else
-                "General sales approach recommended"
-            ),
-            "engagement_score": int(interest_score),
-            "resolution_status": (
-                "Demo Scheduled" if any(x in combined_text for x in ["demo", "meeting"]) else
-                "Follow-up Needed" if interest_score > 50 else
-                "Unresolved"
-            ),
-            "follow_up_action": (
-                "Schedule technical demo" if interest_level in ["Very High", "High"] else
-                "Send product information" if interest_level == "Medium" else
-                "General follow-up email"
-            ),
-            "sentiment": sentiment["label"],
-            "confidence": float(sentiment["score"]),
-            "main_topics": list(topics) if topics else ["General Inquiry"]
-        }
-        
+                import PyPDF2
+            except ImportError:
+                return JSONResponse({"error": "PyPDF2 not installed on server"}, status_code=500)
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+            text = "\n".join(page.extract_text() or "" for page in pdf_reader.pages)
+        elif filename.lower().endswith((".doc", ".docx")):
+            try:
+                import docx
+            except ImportError:
+                return JSONResponse({"error": "python-docx not installed on server"}, status_code=500)
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            doc = docx.Document(tmp_path)
+            text = "\n".join([p.text for p in doc.paragraphs])
+            os.unlink(tmp_path)
+        else:
+            return JSONResponse({"error": "Unsupported file type"}, status_code=400)
+        return {"text": text}
     except Exception as e:
-        logger.error(f"Enhanced fallback analysis failed: {traceback.format_exc()}")
-        return {
-            "error": str(e),
-            "summary": ["Analysis temporarily unavailable"],
-            "interest_level": "Unknown",
-            "csat_prediction": "Unknown"
-        }
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ConversationIn(BaseModel):
-    conversation: List[Message]
-
-@app.get("/", response_class=HTMLResponse)
-async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+        logger.error(f"File parse error: {traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/ask")
 async def ask(
     audio: UploadFile = File(...),
     conversation: str = Form("")
 ):
+    # Block if not ready
+    if not app.state.ready:
+        return JSONResponse({"error": "Bot is not ready. Please confirm KB and prompt."}, status_code=400)
+
     logger.info("Received /ask POST request")
     t0 = time.time()
     webm_path = "app/static/user_input.webm"
@@ -230,8 +290,18 @@ async def ask(
             except json.JSONDecodeError as e:
                 logger.warning(f"Error decoding conversation history: {e}")
 
-        # Get bot response
-        bot_reply = gpt_azure_chat(user_text, KB, SYSTEM_PROMPT, history)
+        # === Use latest KB and System Prompt ===
+        kb_now = load_kb()
+        system_prompt_now = load_system_prompt()
+
+        # Pass session config to GPT/chat function if you want to use voice_id, intro_line, closing_line
+        bot_reply = gpt_azure_chat(
+            user_text,
+            kb_now,
+            system_prompt_now,
+            history
+        )
+
         t4 = time.time()
 
         # Update conversation history
@@ -255,64 +325,18 @@ async def ask(
         logger.error(f"Exception in /ask endpoint: {traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/analyze")
-async def analyze_conversation(payload: ConversationIn):
-    try:
-        conversation = [msg.dict() for msg in payload.conversation]
-        if not conversation:
-            return {"status": "error", "message": "No conversation data received."}
-
-        conversation_text = "\n".join(
-            f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in conversation[-6:]
-        )
-
-        analysis_result = (
-            analyze_with_openai(conversation_text)
-            if OPENAI_API_KEY
-            else analyze_with_fallback(conversation)
-        )
-
-        return {
-            "status": "success",
-            "analysis": analysis_result,
-            "timestamp": datetime.now().isoformat(),
-            "conversation_length": len(conversation),
-            "main_topic": (
-                analysis_result.get("main_topics", ["General Inquiry"])[0]
-                if analysis_result.get("main_topics")
-                else "General Inquiry"
-            )
-        }
-    except Exception as e:
-        logger.error(f"Analysis error: {traceback.format_exc()}")
-        return {"status": "error", "message": str(e)}
-
-@app.get("/tts_intro")
-async def tts_intro():
-    intro_text = os.getenv("BOT_INTRO_TEXT", "Hello, I'm calling from HPE about your server needs. Do you have a moment to talk?")
-    intro_audio_path = "app/static/intro.wav"
-    try:
-        elevenlabs_tts(intro_text, intro_audio_path)
-        return JSONResponse({
-            "audio_url": "/static/intro.wav",
-            "intro_text": intro_text
-        })
-    except Exception as e:
-        logger.error(f"Intro TTS failed: {traceback.format_exc()}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
 @app.get("/stream_tts")
 async def stream_tts(text: str):
+    # Use Voice ID from session if provided, else fallback to env
+    voice_id = app.state.session_config.get("voice_id") or os.getenv("ELEVEN_VOICE_ID")
     ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
-    ELEVEN_VOICE_ID = os.getenv("ELEVEN_VOICE_ID")
-    if not ELEVEN_API_KEY or not ELEVEN_VOICE_ID:
+    if not ELEVEN_API_KEY or not voice_id:
         return JSONResponse(
             {"error": "ElevenLabs configuration missing"},
             status_code=500
         )
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE_ID}/stream"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
     headers = {
         "xi-api-key": ELEVEN_API_KEY,
         "Content-Type": "application/json"
@@ -342,3 +366,62 @@ async def stream_tts(text: str):
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache"}
     )
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# ========== NEW CONVERSATION ANALYSIS ENDPOINT ==========
+@app.post("/analyze")
+async def analyze_conversation(body: dict = Body(...)):
+    """
+    Analyze the conversation using GPT and return a structured summary, lead interest, CSAT, and improvements.
+    """
+    try:
+        conversation = body.get("conversation", [])
+        if isinstance(conversation, str):
+            try:
+                conversation = json.loads(conversation)
+            except Exception:
+                pass
+
+        # Compose prompt for GPT (make GPT always return ONLY a valid JSON)
+        prompt = (
+            "Analyze the following conversation for a summary (max 3 points), lead interest (1–10), csat (1–10), and improvements (1–2 lines). "
+            "Always return: {\"summary\": [ ... ], \"lead_interest\": x, \"csat\": x, \"improvements\": \"...\"}. "
+            "NO markdown, NO code block, NO explanation, ONLY pure JSON.\n"
+            f"Conversation: {conversation}"
+        )
+
+        # You probably have a function for GPT, e.g., gpt_azure_chat:
+        # (change as needed for your project)
+        gpt_resp = gpt_azure_chat(prompt, "", "", [])
+
+        # Try to parse
+        analysis = None
+        try:
+            # If GPT returned a string containing JSON, parse it
+            analysis = json.loads(gpt_resp)
+        except Exception:
+            # Fallback: extract JSON from string
+            import re
+            match = re.search(r'\{[\s\S]*\}', gpt_resp)
+            if match:
+                try:
+                    analysis = json.loads(match.group(0))
+                except Exception:
+                    analysis = None
+
+        if not analysis:
+            # fallback if model fails
+            analysis = {
+                "summary": ["Unable to parse conversation summary due to model response format."],
+                "lead_interest": None,
+                "csat": None,
+                "improvements": "Ensure the model returns structured JSON for analysis.",
+                "raw": gpt_resp
+            }
+        return {"status": "success", "analysis": analysis}
+    except Exception as e:
+        logger.error(f"Error during conversation analysis: {traceback.format_exc()}")
+        return {"status": "error", "message": str(e)}
